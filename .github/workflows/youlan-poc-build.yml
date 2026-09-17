@@ -1,0 +1,44 @@
+name: Build YouLan PoC
+
+on:
+  push:
+    branches:
+      - youlan-poc-build-20260917
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recreate source tree
+        shell: bash
+        run: |
+          base64 -d youlan-poc-buildsrc.tgz.b64 > /tmp/youlan.tgz
+          tar -xzf /tmp/youlan.tgz
+          cp -a YouLan-PoC/. .
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        shell: bash
+        run: gradle :app:assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YouLan-PoC-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
