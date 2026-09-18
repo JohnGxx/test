@@ -75,7 +75,7 @@ jobs:
               v022patch_02 \
               v022patch_03 \
               v022patch_04 \
-              v022patch_05 > /tmp/youlan-v022.patch.b64
+              v022patch_05 | tr -d '\n' > /tmp/youlan-v022.patch.b64
           test "$(wc -c < /tmp/youlan-v022.patch.b64)" -eq 22992
           echo "a641da7c6e5ed09ff3ed6fa2e8d2f66a70189c82524558ac53e3b6a919c235fd  /tmp/youlan-v022.patch.b64" | sha256sum -c -
           base64 --decode /tmp/youlan-v022.patch.b64 > /tmp/youlan-v022.patch
