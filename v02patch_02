@@ -1,0 +1,22 @@
+tlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.asStateFlow
++
++/**
++ * Process-local foreground signal for YouLan's own activities.
++ *
++ * Accessibility events from overlay/system windows can arrive late or out of order on OEM ROMs.
++ * Our own Activity lifecycle is authoritative: whenever a YouLan screen is resumed, the global
++ * navigation overlay must be hidden regardless of any stale third-party accessibility event.
++ */
++object YouLanForegroundState {
++    private val _isForeground = MutableStateFlow(false)
++    val isForeground = _isForeground.asStateFlow()
++
++    fun onYouLanResumed() {
++        _isForeground.value = true
++    }
++
++    fun onYouLanPaused() {
++        _isForeground.value = false
++    }
++}
