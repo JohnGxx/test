@@ -1,9 +1,9 @@
-name: Build YouLan APK
+name: Build YouLan v0.2 APK
 
 on:
   push:
     branches:
-      - youlan-poc-final-build-20260918
+      - youlan-poc-v0.2-fix-20260918
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Recreate source tree
+      - name: Recreate v0.1 source tree
         shell: bash
         run: |
           cat youlan-src-00.b64               youlan-src-01-0.b64               youlan-src-01-1.b64               youlan-src-01-2.b64               youlan-src-01-3.b64               youlan-src-02.b64               youlan-src-03.b64               youlan-src-04.b64 > /tmp/youlan-src.b64
@@ -30,7 +30,15 @@ jobs:
           echo "928f81dcb233e40747ec75ee6022e6613e38b68845873528ff30b9d553e2619b  /tmp/youlan-final-src.tgz" | sha256sum -c -
           tar -xzf /tmp/youlan-final-src.tgz
           test -f YouLan/settings.gradle.kts
-          test -f YouLan/app/build.gradle.kts
+
+      - name: Apply v0.2 fixes
+        shell: bash
+        run: |
+          cat v02patch_00 v02patch_01 v02patch_02 > /tmp/youlan-v0.2.patch
+          patch -p1 --batch < /tmp/youlan-v0.2.patch
+          grep -q 'versionName = "0.2.0-poc"' YouLan/app/build.gradle.kts
+          grep -q '搜索应用名称或包名' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
+          grep -q 'YouLanForegroundState' YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt
 
       - name: Ensure Android SDK 35
         shell: bash
@@ -40,7 +48,6 @@ jobs:
             yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
             "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
           fi
-          ls -l "$ANDROID_HOME/platforms/android-35/android.jar"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -61,6 +68,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: YouLan-PoC-debug
+          name: YouLan-PoC-v0.2-debug
           path: YouLan/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
