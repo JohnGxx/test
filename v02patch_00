@@ -1,0 +1,243 @@
+diff -ruN old/YouLan/README.md new/YouLan/README.md
+--- old/YouLan/README.md	2026-09-17 13:53:55.000000000 +0000
++++ new/YouLan/README.md	2026-09-18 02:19:28.890383826 +0000
+@@ -67,3 +67,12 @@
+ ## PoC 边界
+ 
+ 这是技术验证版，不是最终商店版。PIN 家属模式、Device Owner、Lock Task、远程管理、厂商专项保活等留待 V1/V2 后续迭代。
++
++## PoC v0.2.0 修复
++
++- 家属设置新增应用名称/包名实时搜索与清除。
++- 全局“返回 / 主页”导航改为单实例 Accessibility Overlay：服务连接时只 addView 一次，后续使用 VISIBLE/GONE 控制，避免反复 add/remove 造成窗口事件抖动。
++- 新增 YouLan Activity 前台状态信号，YouLan 桌面/家属设置处于前台时强制隐藏导航栏，防止第三方延迟事件导致桌面残留。
++- `com.android.systemui` 改为瞬时窗口事件，默认忽略，不再导致第三方 App 内导航栏闪烁；锁屏状态仍隐藏。
++- 第三方前台包增加 120ms 防抖确认。
++- 点击“主页”立即隐藏导航栏，并在 launcher 恢复窗口期间抑制延迟事件。
+diff -ruN old/YouLan/app/build.gradle.kts new/YouLan/app/build.gradle.kts
+--- old/YouLan/app/build.gradle.kts	2026-09-17 09:26:47.000000000 +0000
++++ new/YouLan/app/build.gradle.kts	2026-09-18 02:18:51.453410738 +0000
+@@ -12,8 +12,8 @@
+         applicationId = "com.john.youlan"
+         minSdk = 29
+         targetSdk = 35
+-        versionCode = 1
+-        versionName = "0.1.0-poc"
++        versionCode = 2
++        versionName = "0.2.0-poc"
+     }
+ 
+     buildTypes {
+diff -ruN old/YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt new/YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
+--- old/YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt	2026-09-17 09:26:47.000000000 +0000
++++ new/YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt	2026-09-18 02:18:50.844141191 +0000
+@@ -7,6 +7,7 @@
+ import androidx.activity.compose.setContent
+ import androidx.compose.foundation.Image
+ import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.Spacer
+@@ -22,6 +23,8 @@
+ import androidx.compose.material3.CardDefaults
+ import androidx.compose.material3.HorizontalDivider
+ import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.TextButton
+ import androidx.compose.material3.Scaffold
+ import androidx.compose.material3.Switch
+ import androidx.compose.material3.Text
+@@ -45,6 +48,7 @@
+ import com.john.youlan.model.AppEntry
+ import com.john.youlan.ui.YouLanTheme
+ import com.john.youlan.util.InstalledApps
++import com.john.youlan.util.YouLanForegroundState
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
+@@ -58,6 +62,16 @@
+             }
+         }
+     }
++
++    override fun onResume() {
++        super.onResume()
++        YouLanForegroundState.onYouLanResumed()
++    }
++
++    override fun onPause() {
++        YouLanForegroundState.onYouLanPaused()
++        super.onPause()
++    }
+ }
+ 
+ @Composable
+@@ -70,12 +84,25 @@
+         .collectAsState(initial = false)
+ 
+     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
++    var searchQuery by remember { mutableStateOf("") }
+     LaunchedEffect(Unit) {
+         apps = withContext(Dispatchers.IO) {
+             InstalledApps.loadLaunchableApps(context)
+         }
+     }
+ 
++    val filteredApps = remember(apps, searchQuery) {
++        val query = searchQuery.trim()
++        if (query.isEmpty()) {
++            apps
++        } else {
++            apps.filter { app ->
++                app.label.contains(query, ignoreCase = true) ||
++                    app.packageName.contains(query, ignoreCase = true)
++            }
++        }
++    }
++
+     Scaffold { padding ->
+         Column(
+             modifier = Modifier
+@@ -145,8 +172,39 @@
+                 fontWeight = FontWeight.Bold
+             )
+ 
++            OutlinedTextField(
++                value = searchQuery,
++                onValueChange = { searchQuery = it },
++                modifier = Modifier
++                    .fillMaxWidth()
++                    .padding(bottom = 8.dp),
++                placeholder = { Text("搜索应用名称或包名") },
++                singleLine = true,
++                trailingIcon = {
++                    if (searchQuery.isNotEmpty()) {
++                        TextButton(onClick = { searchQuery = "" }) {
++                            Text("清除")
++                        }
++                    }
++                }
++            )
++
++            if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
++                Box(
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .padding(vertical = 28.dp),
++                    contentAlignment = Alignment.Center
++                ) {
++                    Text(
++                        "未找到相关应用",
++                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
++                    )
++                }
++            }
++
+             LazyColumn(modifier = Modifier.fillMaxSize()) {
+-                items(apps, key = { it.packageName }) { app ->
++                items(filteredApps, key = { it.packageName }) { app ->
+                     AppToggleRow(
+                         app = app,
+                         checked = app.packageName in selected,
+diff -ruN old/YouLan/app/src/main/java/com/john/youlan/MainActivity.kt new/YouLan/app/src/main/java/com/john/youlan/MainActivity.kt
+--- old/YouLan/app/src/main/java/com/john/youlan/MainActivity.kt	2026-09-17 09:52:05.000000000 +0000
++++ new/YouLan/app/src/main/java/com/john/youlan/MainActivity.kt	2026-09-18 02:18:50.843910682 +0000
+@@ -56,6 +56,7 @@
+ import com.john.youlan.ui.YouLanTheme
+ import com.john.youlan.util.InstalledApps
+ import com.john.youlan.util.SystemState
++import com.john.youlan.util.YouLanForegroundState
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ 
+@@ -73,8 +74,14 @@
+ 
+     override fun onResume() {
+         super.onResume()
++        YouLanForegroundState.onYouLanResumed()
+         resumeTick++
+     }
++
++    override fun onPause() {
++        YouLanForegroundState.onYouLanPaused()
++        super.onPause()
++    }
+ }
+ 
+ @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+diff -ruN old/YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt new/YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt
+--- old/YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt	2026-09-17 13:53:55.000000000 +0000
++++ new/YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt	2026-09-18 02:19:29.397749091 +0000
+@@ -1,10 +1,12 @@
+ package com.john.youlan.service
+ 
+ import android.accessibilityservice.AccessibilityService
++import android.app.KeyguardManager
+ import android.content.Intent
+ import android.graphics.Color
+ import android.graphics.PixelFormat
+ import android.graphics.drawable.GradientDrawable
++import android.os.SystemClock
+ import android.view.Gravity
+ import android.view.View
+ import android.view.WindowManager
+@@ -13,6 +15,7 @@
+ import android.widget.TextView
+ import com.john.youlan.MainActivity
+ import com.john.youlan.data.YouLanPreferences
++import com.john.youlan.util.YouLanForegroundState
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+@@ -24,17 +27,39 @@
+ 
+ class YouLanAccessibilityService : AccessibilityService() {
+     private lateinit var windowManager: WindowManager
++    private lateinit var keyguardManager: KeyguardManager
++
++    /**
++     * The accessibility overlay is added to WindowManager only once for the whole service lifetime.
++     * Visibility changes use VISIBLE/GONE instead of addView/removeView to avoid self-triggered
++     * window callbacks that caused the navigation bar to flicker on ColorOS.
++     */
+     private var overlayView: View? = null
+     private var warningView: TextView? = null
+ 
+     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+     private var selectedPackages: Set<String> = emptySet()
+     private var guardUnknownPackages: Boolean = false
+-    private var currentPackage: String? = null
++
++    /** Last package that passed the debounce window and became the stable foreground app. */
++    private var stableForegroundPackage: String? = null
++    private var pendingForegroundPackage: String? = null
++    private var foregroundCommitJob: Job? = null
+     private var guardJob: Job? = null
+ 
++    /**
++     * After the user taps Home, suppress stale third-party callbacks for a short time while the
++     * launcher resumes. This prevents a one-frame overlay flash on the YouLan desktop.
++     */
++    private var suppressOverlayUntilUptime: Long = 0L
++
++    private val transientPackages = setOf(
++        // Status/navigation bars and other short-lived system windows must not become foreground.
++        "com.android.systemui"
++    )
++
+     private val hiddenPackages = setOf(
+-        "com.android.systemui",
++        // System/setup screens intentionally hide the large navigation bar.
+         "com.android.settings",
+         "com.google.android.permissioncontroller",
+         "com.android.permissioncontroller",
+@@ -45,101 +70,189 @@
+     override fun onServiceConnected() {
+         super.onServiceConnected()
+         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
++        keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
++        ensureOverlayCreated()
++        setOverlayVisible(false)
+ 
+         serviceScope.launch {
