@@ -1,0 +1,257 @@
+         YouLanPreferences.selectedPackages(applicationContext)
+                 .distinctUntilChanged()
+-                .collect { selectedPackages = it }
++                .collect { packages ->
++                    selectedPackages = packages
++                    stableForegroundPackage?.let { updateOverlayForStablePackage(it) }
++                }
+         }
+         serviceScope.launch {
+             YouLanPreferences.guardUnknownPackages(applicationContext)
+                 .distinctUntilChanged()
+-                .collect { guardUnknownPackages = it }
++                .collect { enabled ->
++                    guardUnknownPackages = enabled
++                    if (!enabled) guardJob?.cancel()
++                }
++        }
++        serviceScope.launch {
++            YouLanForegroundState.isForeground
++                .distinctUntilChanged()
++                .collect { youLanForeground ->
++                    if (youLanForeground) {
++                        foregroundCommitJob?.cancel()
++                        guardJob?.cancel()
++                        setOverlayVisible(false)
++                    }
++                }
+         }
+     }
+ 
+     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+         event ?: return
+-        val packageName = event.packageName?.toString() ?: return
++        val packageName = event.packageName?.toString()?.takeIf { it.isNotBlank() } ?: return
+ 
+-        // TYPE_ACCESSIBILITY_OVERLAY can itself cause window-change callbacks on some ROMs.
+-        // Ignore our own overlay callbacks, but hide the bar when a real YouLan Activity is foreground.
+-        if (packageName == applicationContext.packageName) {
+-            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+-                hideOverlay()
+-            }
++        // Our Activity lifecycle is authoritative. Never let a delayed third-party event paint the
++        // overlay over YouLan's launcher/settings screens.
++        if (YouLanForegroundState.isForeground.value) {
++            setOverlayVisible(false)
+             return
+         }
+ 
+-        currentPackage = packageName
+-
+-        if (shouldHideOverlay(packageName)) {
+-            hideOverlay()
++        // Accessibility overlays can generate callbacks attributed to our own package on some ROMs.
++        // Ignore them rather than treating them as a signal to remove/re-add the overlay.
++        if (packageName == applicationContext.packageName) return
++
++        // SystemUI frequently emits transient callbacks while the actual third-party app remains in
++        // front. Ignoring these callbacks is critical to keeping the navigation bar continuously on.
++        if (packageName in transientPackages) {
++            if (keyguardManager.isKeyguardLocked) {
++                setOverlayVisible(false)
++            }
+             return
+         }
+ 
+-        val whitelisted = selectedPackages.isEmpty() || packageName in selectedPackages
+-        showOverlay(whitelisted)
+-
+-        if (!whitelisted && guardUnknownPackages) {
+-            scheduleUnknownPackageGuard(packageName)
+-        }
++        scheduleStableForegroundCommit(packageName)
+     }
+ 
+     override fun onInterrupt() = Unit
+ 
+     override fun onDestroy() {
++        foregroundCommitJob?.cancel()
+         guardJob?.cancel()
+-        hideOverlay()
++        if (::windowManager.isInitialized) {
++            overlayView?.let { view -> runCatching { windowManager.removeView(view) } }
++        }
++        overlayView = null
++        warningView = null
+         serviceScope.cancel()
+         super.onDestroy()
+     }
+ 
+-    private fun shouldHideOverlay(packageName: String): Boolean {
+-        return packageName == applicationContext.packageName || packageName in hiddenPackages
++    private fun scheduleStableForegroundCommit(packageName: String) {
++        pendingForegroundPackage = packageName
++        foregroundCommitJob?.cancel()
++        foregroundCommitJob = serviceScope.launch {
++            // App transitions often emit old-app -> SystemUI -> new-app -> SystemUI in quick order.
++            // Debounce so UI state changes only once after the real foreground app settles.
++            delay(120)
++            if (pendingForegroundPackage != packageName) return@launch
++            if (YouLanForegroundState.isForeground.value) {
++                setOverlayVisible(false)
++                return@launch
++            }
++
++            stableForegroundPackage = packageName
++            updateOverlayForStablePackage(packageName)
++        }
++    }
++
++    private fun updateOverlayForStablePackage(packageName: String) {
++        if (YouLanForegroundState.isForeground.value) {
++            setOverlayVisible(false)
++            return
++        }
++
++        if (SystemClock.uptimeMillis() < suppressOverlayUntilUptime) {
++            setOverlayVisible(false)
++            return
++        }
++
++        if (keyguardManager.isKeyguardLocked || packageName in hiddenPackages) {
++            guardJob?.cancel()
++            setOverlayVisible(false)
++            return
++        }
++
++        val whitelisted = selectedPackages.isEmpty() || packageName in selectedPackages
++        showOverlay(whitelisted)
++
++        if (!whitelisted && guardUnknownPackages) {
++            scheduleUnknownPackageGuard(packageName)
++        } else {
++            guardJob?.cancel()
++        }
+     }
+ 
+     private fun scheduleUnknownPackageGuard(packageName: String) {
+         guardJob?.cancel()
+         guardJob = serviceScope.launch {
+             delay(650)
+-            if (currentPackage != packageName || packageName in selectedPackages) return@launch
++            if (YouLanForegroundState.isForeground.value) return@launch
++            if (stableForegroundPackage != packageName || packageName in selectedPackages) return@launch
+ 
+             performGlobalAction(GLOBAL_ACTION_BACK)
+             delay(550)
+ 
+-            if (currentPackage == packageName && packageName !in selectedPackages) {
++            if (
++                !YouLanForegroundState.isForeground.value &&
++                stableForegroundPackage == packageName &&
++                packageName !in selectedPackages
++            ) {
+                 openYouLanHome()
+             }
+         }
+     }
+ 
+-    private fun showOverlay(whitelisted: Boolean) {
+-        if (overlayView == null) {
+-            overlayView = createOverlayView()
+-            val params = WindowManager.LayoutParams(
+-                WindowManager.LayoutParams.MATCH_PARENT,
+-                WindowManager.LayoutParams.WRAP_CONTENT,
+-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+-                PixelFormat.TRANSLUCENT
+-            ).apply {
+-                gravity = Gravity.BOTTOM
+-            }
+-            runCatching { windowManager.addView(overlayView, params) }
++    private fun ensureOverlayCreated() {
++        if (overlayView != null) return
++
++        val view = createOverlayView().apply {
++            visibility = View.GONE
+         }
++        val params = WindowManager.LayoutParams(
++            WindowManager.LayoutParams.MATCH_PARENT,
++            WindowManager.LayoutParams.WRAP_CONTENT,
++            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
++            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
++                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
++            PixelFormat.TRANSLUCENT
++        ).apply {
++            gravity = Gravity.BOTTOM
++        }
++
++        val added = runCatching {
++            windowManager.addView(view, params)
++            true
++        }.getOrDefault(false)
++
++        if (added) {
++            overlayView = view
++        } else {
++            warningView = null
++        }
++    }
+ 
++    private fun showOverlay(whitelisted: Boolean) {
++        ensureOverlayCreated()
+         warningView?.apply {
+             visibility = if (whitelisted) View.GONE else View.VISIBLE
+             text = "已进入非白名单应用，可按“主页”立即返回"
+         }
++        setOverlayVisible(true)
+     }
+ 
+-    private fun hideOverlay() {
++    private fun setOverlayVisible(visible: Boolean) {
+         val view = overlayView ?: return
+-        runCatching { windowManager.removeView(view) }
+-        overlayView = null
+-        warningView = null
++        val target = if (visible) View.VISIBLE else View.GONE
++        if (view.visibility != target) {
++            view.visibility = target
++        }
+     }
+ 
+     private fun createOverlayView(): View {
+@@ -179,10 +292,16 @@
+         }
+ 
+         val back = createLargeButton("←  返回").apply {
+-            setOnClickListener { performGlobalAction(GLOBAL_ACTION_BACK) }
++            setOnClickListener {
++                performGlobalAction(GLOBAL_ACTION_BACK)
++            }
+         }
+         val home = createLargeButton("⌂  主页").apply {
+-            setOnClickListener { openYouLanHome() }
++            setOnClickListener {
++                // Hide immediately; do not wait for an accessibility callback from the launcher.
++                setOverlayVisible(false)
++                openYouLanHome()
++            }
+         }
+ 
+         buttons.addView(back, weightedButtonParams())
+@@ -213,6 +332,8 @@
+     )
+ 
+     private fun openYouLanHome() {
++        suppressOverlayUntilUptime = SystemClock.uptimeMillis() + 1_200L
++        setOverlayVisible(false)
+         startActivity(
+             Intent(this, MainActivity::class.java).apply {
+                 addFlags(
+diff -ruN old/YouLan/app/src/main/java/com/john/youlan/util/YouLanForegroundState.kt new/YouLan/app/src/main/java/com/john/youlan/util/YouLanForegroundState.kt
+--- old/YouLan/app/src/main/java/com/john/youlan/util/YouLanForegroundState.kt	1970-01-01 00:00:00.000000000 +0000
++++ new/YouLan/app/src/main/java/com/john/youlan/util/YouLanForegroundState.kt	2026-09-18 02:18:50.368501108 +0000
+@@ -0,0 +1,24 @@
++package com.john.youlan.util
++
++import ko
