@@ -1,9 +1,9 @@
-name: Build YouLan v0.2 APK
+name: Build YouLan v0.2.2 APK
 
 on:
   push:
     branches:
-      - youlan-poc-v0.2-build2-20260918
+      - youlan-v0.2.2-search-ime-20260918
 
 permissions:
   contents: read
@@ -66,9 +66,25 @@ jobs:
               raise SystemExit('Expected StateFlow block not found')
           p.write_text(s.replace(old, new))
           PY
-          grep -q 'versionName = "0.2.0-poc"' YouLan/app/build.gradle.kts
-          grep -q '搜索应用名称或包名' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
-          grep -q 'YouLanForegroundState.isForeground' YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt
+
+      - name: Apply v0.2.2 search and IME optimization
+        shell: bash
+        run: |
+          cat v022patch_00 \
+              v022patch_01 \
+              v022patch_02 \
+              v022patch_03 \
+              v022patch_04 \
+              v022patch_05 > /tmp/youlan-v022.patch.b64
+          test "$(wc -c < /tmp/youlan-v022.patch.b64)" -eq 22992
+          echo "a641da7c6e5ed09ff3ed6fa2e8d2f66a70189c82524558ac53e3b6a919c235fd  /tmp/youlan-v022.patch.b64" | sha256sum -c -
+          base64 --decode /tmp/youlan-v022.patch.b64 > /tmp/youlan-v022.patch
+          echo "921e8709cb42c08173e50d7cf4185d5cc030c50772f1c0ad0586ecc5837ddcb6  /tmp/youlan-v022.patch" | sha256sum -c -
+          patch -p4 --batch < /tmp/youlan-v022.patch
+          grep -q 'versionName = "0.2.2-poc"' YouLan/app/build.gradle.kts
+          grep -q 'android:windowSoftInputMode="adjustResize"' YouLan/app/src/main/AndroidManifest.xml
+          grep -q 'detectVerticalDragGestures' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
+          grep -q 'stickyHeader' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
 
       - name: Ensure Android SDK 35
         shell: bash
@@ -98,6 +114,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: YouLan-PoC-v0.2.1-debug
+          name: YouLan-PoC-v0.2.2-debug
           path: YouLan/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
