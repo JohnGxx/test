@@ -24,7 +24,14 @@ jobs:
       - name: Recreate v0.1 source tree
         shell: bash
         run: |
-          cat youlan-src-00.b64               youlan-src-01-0.b64               youlan-src-01-1.b64               youlan-src-01-2.b64               youlan-src-01-3.b64               youlan-src-02.b64               youlan-src-03.b64               youlan-src-04.b64 > /tmp/youlan-src.b64
+          cat youlan-src-00.b64 \
+              youlan-src-01-0.b64 \
+              youlan-src-01-1.b64 \
+              youlan-src-01-2.b64 \
+              youlan-src-01-3.b64 \
+              youlan-src-02.b64 \
+              youlan-src-03.b64 \
+              youlan-src-04.b64 > /tmp/youlan-src.b64
           test "$(wc -c < /tmp/youlan-src.b64)" -eq 16556
           base64 --decode /tmp/youlan-src.b64 > /tmp/youlan-final-src.tgz
           echo "928f81dcb233e40747ec75ee6022e6613e38b68845873528ff30b9d553e2619b  /tmp/youlan-final-src.tgz" | sha256sum -c -
@@ -34,14 +41,34 @@ jobs:
       - name: Apply exact v0.2 fixes
         shell: bash
         run: |
-          cat v02patch_b64_00               v02patch_b64_01               v02patch_b64_02               v02patch_b64_03               v02patch_b64_04               v02patch_b64_05               v02patch_b64_06 > /tmp/youlan-v0.2.patch.b64
+          cat v02patch_b64_00 \
+              v02patch_b64_01 \
+              v02patch_b64_02 \
+              v02patch_b64_03 \
+              v02patch_b64_04 \
+              v02patch_b64_05 \
+              v02patch_b64_06 > /tmp/youlan-v0.2.patch.b64
           test "$(wc -c < /tmp/youlan-v0.2.patch.b64)" -eq 27664
           base64 --decode /tmp/youlan-v0.2.patch.b64 > /tmp/youlan-v0.2.patch
           echo "77d622943176e4c8f2bb3bec57a30422dae2ae69dea715fd36ecccdcd5d832e9  /tmp/youlan-v0.2.patch" | sha256sum -c -
           patch -p1 --batch < /tmp/youlan-v0.2.patch
+
+      - name: Fix Kotlin 2 StateFlow compilation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt')
+          s = p.read_text()
+          old = '''        serviceScope.launch {\n            YouLanForegroundState.isForeground\n                .distinctUntilChanged()\n                .collect { youLanForeground ->\n'''
+          new = '''        serviceScope.launch {\n            YouLanForegroundState.isForeground\n                .collect { youLanForeground ->\n'''
+          if old not in s:
+              raise SystemExit('Expected StateFlow block not found')
+          p.write_text(s.replace(old, new))
+          PY
           grep -q 'versionName = "0.2.0-poc"' YouLan/app/build.gradle.kts
           grep -q '搜索应用名称或包名' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
-          grep -q 'YouLanForegroundState' YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt
+          grep -q 'YouLanForegroundState.isForeground' YouLan/app/src/main/java/com/john/youlan/service/YouLanAccessibilityService.kt
 
       - name: Ensure Android SDK 35
         shell: bash
@@ -71,6 +98,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: YouLan-PoC-v0.2-debug
+          name: YouLan-PoC-v0.2.1-debug
           path: YouLan/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
