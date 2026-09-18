@@ -41,6 +41,28 @@ jobs:
           grep -q 'FIXED_SPLIT' YouLan/app/src/main/java/com/john/youlan/navigation/NavigationMode.kt
           grep -q 'SYSTEM_SPLIT' YouLan/app/src/main/java/com/john/youlan/navigation/NavigationMode.kt
 
+      - name: Fix v0.3 alpha1 compile issue
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('YouLan/app/src/main/java/com/john/youlan/navigation/NavigationModeManager.kt')
+          s = p.read_text()
+          s = s.replace('import android.app.Activity\n', '')
+          s = s.replace(
+              'import androidx.lifecycle.lifecycleScope\n',
+              'import androidx.activity.ComponentActivity\nimport androidx.lifecycle.lifecycleScope\n'
+          )
+          s = s.replace('fun launchApp(activity: Activity, app: AppEntry, mode: NavigationMode): Boolean {', 'fun launchApp(activity: ComponentActivity, app: AppEntry, mode: NavigationMode): Boolean {')
+          s = s.replace('private fun launchOverlay(activity: Activity, app: AppEntry): Boolean {', 'private fun launchOverlay(activity: ComponentActivity, app: AppEntry): Boolean {')
+          s = s.replace('private fun launchFixedSplit(activity: Activity, app: AppEntry): Boolean {', 'private fun launchFixedSplit(activity: ComponentActivity, app: AppEntry): Boolean {')
+          s = s.replace('private fun launchSystemSplit(activity: Activity, app: AppEntry): Boolean {', 'private fun launchSystemSplit(activity: ComponentActivity, app: AppEntry): Boolean {')
+          s = s.replace('private fun launchNormally(activity: Activity, app: AppEntry): Boolean {', 'private fun launchNormally(activity: ComponentActivity, app: AppEntry): Boolean {')
+          p.write_text(s)
+          PY
+          grep -q 'fun launchApp(activity: ComponentActivity' YouLan/app/src/main/java/com/john/youlan/navigation/NavigationModeManager.kt
+          ! grep -q 'activity: Activity' YouLan/app/src/main/java/com/john/youlan/navigation/NavigationModeManager.kt
+
       - name: Ensure Android SDK 35
         shell: bash
         run: |
