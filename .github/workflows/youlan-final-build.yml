@@ -24,7 +24,10 @@ jobs:
       - name: Recreate source tree
         shell: bash
         run: |
-          base64 --decode youlan-final-src.tgz.b64 > /tmp/youlan-final-src.tgz
+          cat youlan-src-00.b64               youlan-src-01-0.b64               youlan-src-01-1.b64               youlan-src-01-2.b64               youlan-src-01-3.b64               youlan-src-02.b64               youlan-src-03.b64               youlan-src-04.b64 > /tmp/youlan-src.b64
+          test "$(wc -c < /tmp/youlan-src.b64)" -eq 16556
+          base64 --decode /tmp/youlan-src.b64 > /tmp/youlan-final-src.tgz
+          echo "928f81dcb233e40747ec75ee6022e6613e38b68845873528ff30b9d553e2619b  /tmp/youlan-final-src.tgz" | sha256sum -c -
           tar -xzf /tmp/youlan-final-src.tgz
           test -f YouLan/settings.gradle.kts
           test -f YouLan/app/build.gradle.kts
