@@ -3,7 +3,7 @@ name: Build YouLan v0.2 APK
 on:
   push:
     branches:
-      - youlan-poc-v0.2-fix-20260918
+      - youlan-poc-v0.2-build2-20260918
 
 permissions:
   contents: read
@@ -31,10 +31,13 @@ jobs:
           tar -xzf /tmp/youlan-final-src.tgz
           test -f YouLan/settings.gradle.kts
 
-      - name: Apply v0.2 fixes
+      - name: Apply exact v0.2 fixes
         shell: bash
         run: |
-          cat v02patch_00 v02patch_01 v02patch_02 > /tmp/youlan-v0.2.patch
+          cat v02patch_b64_00               v02patch_b64_01               v02patch_b64_02               v02patch_b64_03               v02patch_b64_04               v02patch_b64_05               v02patch_b64_06 > /tmp/youlan-v0.2.patch.b64
+          test "$(wc -c < /tmp/youlan-v0.2.patch.b64)" -eq 27664
+          base64 --decode /tmp/youlan-v0.2.patch.b64 > /tmp/youlan-v0.2.patch
+          echo "77d622943176e4c8f2bb3bec57a30422dae2ae69dea715fd36ecccdcd5d832e9  /tmp/youlan-v0.2.patch" | sha256sum -c -
           patch -p1 --batch < /tmp/youlan-v0.2.patch
           grep -q 'versionName = "0.2.0-poc"' YouLan/app/build.gradle.kts
           grep -q '搜索应用名称或包名' YouLan/app/src/main/java/com/john/youlan/FamilySettingsActivity.kt
